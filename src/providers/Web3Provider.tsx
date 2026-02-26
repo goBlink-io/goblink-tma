@@ -57,6 +57,10 @@ const queryClient = new QueryClient({
 
 const projectId = REOWN_PROJECT_ID;
 
+if (!projectId) {
+  console.warn("⚠️ VITE_REOWN_PROJECT_ID is not set — EVM/Solana wallets disabled");
+}
+
 const metadata = {
   name: "goBlink",
   description: "Cross-Chain Transfers -- instant, low-cost, any chain",
