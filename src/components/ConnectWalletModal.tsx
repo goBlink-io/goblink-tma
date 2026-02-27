@@ -30,16 +30,114 @@ const CHAINS: ChainOption[] = [
   { id: "tron", name: "Tron", description: "Decentralized internet", emoji: "T" },
 ];
 
+// Address validation helpers
+function validateAddress(chain: ChainType, addr: string): boolean {
+  const s = addr.trim();
+  if (!s) return false;
+  switch (chain) {
+    case "sui":
+    case "aptos":
+      return /^0x[0-9a-fA-F]{63,64}$/.test(s);
+    case "near":
+      // Named accounts (alice.near) or hex implicit accounts
+      return (
+        /^[a-z0-9_-]+(\.[a-z0-9_-]+)*$/.test(s) ||
+        /^[0-9a-fA-F]{64}$/.test(s)
+      );
+    case "starknet":
+      return /^0x[0-9a-fA-F]{1,64}$/.test(s);
+    case "tron":
+      return /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(s);
+    default:
+      return s.length > 5;
+  }
+}
+
 function formatAddress(address: string) {
   if (address.length <= 13) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+// Manual address entry — used in TMA where injected wallets don't exist
+function ManualAddressEntry({
+  chain,
+  onSave,
+  onCancel,
+}: {
+  chain: ChainType;
+  onSave: (address: string) => void;
+  onCancel: () => void;
+}) {
+  const [address, setAddress] = useState("");
+  const [error, setError] = useState("");
+
+  const placeholders: Partial<Record<ChainType, string>> = {
+    sui: "0x...",
+    near: "alice.near or implicit account",
+    aptos: "0x...",
+    starknet: "0x...",
+    tron: "T...",
+  };
+
+  const handleSave = () => {
+    const trimmed = address.trim();
+    if (!validateAddress(chain, trimmed)) {
+      setError("Invalid address format");
+      return;
+    }
+    onSave(trimmed);
+  };
+
+  return (
+    <div className="space-y-4 p-4">
+      <div>
+        <p className="text-sm text-[var(--tg-theme-hint-color,#94a3b8)] mb-1">
+          Enter your {CHAINS.find((c) => c.id === chain)?.name} wallet address
+        </p>
+        <p className="text-xs text-[var(--tg-theme-hint-color,#64748b)]">
+          No signing required — address only, for deposit generation.
+        </p>
+      </div>
+      <input
+        type="text"
+        value={address}
+        onChange={(e) => {
+          setAddress(e.target.value);
+          setError("");
+        }}
+        placeholder={placeholders[chain] ?? "Enter address..."}
+        className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-mono focus:outline-none focus:border-blue-500 text-white placeholder-white/30"
+        autoFocus
+        spellCheck={false}
+        autoCorrect="off"
+        autoCapitalize="off"
+      />
+      {error && (
+        <p className="text-xs text-red-400">{error}</p>
+      )}
+      <div className="flex gap-3">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-3 rounded-xl bg-white/5 text-sm font-medium active:scale-[0.98] transition-all"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-violet-600 rounded-xl text-sm font-medium text-white active:scale-[0.98] transition-all"
+        >
+          Save Address
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ConnectWalletModal() {
-  const { isModalOpen, closeModal, isChainConnected, getAddressForChain } =
+  const { isModalOpen, closeModal, isChainConnected, getAddressForChain, setWallet } =
     useWalletStore();
   const { disconnectChain } = useWalletSync();
-  const { haptic } = useTelegram();
+  const { haptic, isInTMA } = useTelegram();
   const { open: openAppKit } = useAppKit();
   const { connect: aptosConnect, wallets: aptosWallets } = useAptosWallet();
   const { connect: starknetConnect, connectors: starknetConnectors } =
@@ -52,26 +150,48 @@ export function ConnectWalletModal() {
   } = useTronWallet();
 
   const [selectedChain, setSelectedChain] = useState<ChainType | null>(null);
+  const [showManualEntry, setShowManualEntry] = useState(false);
 
-  // Auto-close on Sui connect
+  // Chains that only support manual entry (no WalletConnect SDK available)
+  const manualOnlyChains: ChainType[] = ["sui", "near", "aptos", "starknet", "tron"];
+
+  // Auto-close on Sui connect (browser mode only, SDK-based)
   const suiConnected = isChainConnected("sui");
   useEffect(() => {
-    if (suiConnected && selectedChain === "sui") {
+    if (suiConnected && selectedChain === "sui" && !isInTMA) {
       setTimeout(() => {
         closeModal();
         setSelectedChain(null);
       }, 400);
     }
-  }, [suiConnected, selectedChain, closeModal]);
+  }, [suiConnected, selectedChain, closeModal, isInTMA]);
 
   useEffect(() => {
-    if (!isModalOpen) setSelectedChain(null);
+    if (!isModalOpen) {
+      setSelectedChain(null);
+      setShowManualEntry(false);
+    }
   }, [isModalOpen]);
 
   if (!isModalOpen) return null;
 
+  const handleManualSave = (chain: ChainType, address: string) => {
+    setWallet(chain, address);
+    haptic.notificationOccurred("success");
+    setShowManualEntry(false);
+    closeModal();
+    setSelectedChain(null);
+  };
+
   const handleConnect = async (chain: ChainType) => {
     haptic.selectionChanged();
+
+    // In TMA mode, manual-only chains always use manual entry
+    if (isInTMA && manualOnlyChains.includes(chain)) {
+      setShowManualEntry(true);
+      return;
+    }
+
     try {
       switch (chain) {
         case "evm":
@@ -108,7 +228,7 @@ export function ConnectWalletModal() {
           }
           closeModal();
           break;
-        // sui handled via its own button
+        // sui handled via its own button in browser mode
       }
     } catch (e) {
       console.error(`Connect ${chain} failed:`, e);
@@ -118,6 +238,40 @@ export function ConnectWalletModal() {
   const renderChainConnect = () => {
     if (!selectedChain) return null;
 
+    // Manual entry shown in TMA or when user clicked "Enter manually"
+    if (showManualEntry && manualOnlyChains.includes(selectedChain)) {
+      return (
+        <ManualAddressEntry
+          chain={selectedChain}
+          onSave={(addr) => handleManualSave(selectedChain, addr)}
+          onCancel={() => setShowManualEntry(false)}
+        />
+      );
+    }
+
+    // TMA mode: show manual entry option directly for unsupported chains
+    if (isInTMA && manualOnlyChains.includes(selectedChain)) {
+      return (
+        <div className="space-y-4 p-4">
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
+            <p className="text-xs text-amber-400 font-medium">
+              ⚡ Telegram WebApp Mode
+            </p>
+            <p className="text-xs text-[var(--tg-theme-hint-color,#94a3b8)] mt-1">
+              Browser extensions aren't available in Telegram. Enter your address manually — no signing required.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowManualEntry(true)}
+            className="w-full py-3 bg-gradient-to-r from-blue-600 to-violet-600 rounded-xl font-medium text-white active:scale-[0.98] transition-all"
+          >
+            Enter Address Manually
+          </button>
+        </div>
+      );
+    }
+
+    // Browser mode: existing SDK-based flows
     if (selectedChain === "sui") {
       return (
         <div className="space-y-4 p-4">
@@ -127,6 +281,12 @@ export function ConnectWalletModal() {
           <div className="flex justify-center">
             <SuiConnectButton />
           </div>
+          <button
+            onClick={() => setShowManualEntry(true)}
+            className="w-full py-2 text-xs text-[var(--tg-theme-hint-color,#94a3b8)] active:text-white transition-colors"
+          >
+            or enter address manually
+          </button>
         </div>
       );
     }
@@ -152,6 +312,12 @@ export function ConnectWalletModal() {
               </span>
             </button>
           ))}
+          <button
+            onClick={() => setShowManualEntry(true)}
+            className="w-full py-2 text-xs text-[var(--tg-theme-hint-color,#94a3b8)] active:text-white transition-colors"
+          >
+            or enter address manually
+          </button>
         </div>
       );
     }
@@ -174,8 +340,26 @@ export function ConnectWalletModal() {
             Powered by Reown AppKit
           </p>
         )}
+        {manualOnlyChains.includes(selectedChain) && (
+          <button
+            onClick={() => setShowManualEntry(true)}
+            className="w-full py-2 text-xs text-[var(--tg-theme-hint-color,#94a3b8)] active:text-white transition-colors"
+          >
+            or enter address manually
+          </button>
+        )}
       </div>
     );
+  };
+
+  const handleBackPress = () => {
+    if (showManualEntry) {
+      setShowManualEntry(false);
+    } else if (selectedChain) {
+      setSelectedChain(null);
+    } else {
+      closeModal();
+    }
   };
 
   return (
@@ -186,7 +370,11 @@ export function ConnectWalletModal() {
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div>
             <h2 className="text-base font-bold">
-              {selectedChain ? "Connect Wallet" : "Select Chain"}
+              {selectedChain
+                ? showManualEntry
+                  ? "Enter Address"
+                  : "Connect Wallet"
+                : "Select Chain"}
             </h2>
             <p className="text-xs text-[var(--tg-theme-hint-color,#94a3b8)]">
               {selectedChain
@@ -195,9 +383,7 @@ export function ConnectWalletModal() {
             </p>
           </div>
           <button
-            onClick={
-              selectedChain ? () => setSelectedChain(null) : closeModal
-            }
+            onClick={handleBackPress}
             className="p-2 rounded-lg active:bg-white/10 transition-colors"
           >
             {selectedChain ? (
@@ -260,7 +446,12 @@ export function ConnectWalletModal() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            disconnectChain(chain.id);
+                            // For manually-entered addresses, clear from store directly
+                            if (isInTMA && manualOnlyChains.includes(chain.id)) {
+                              setWallet(chain.id, null);
+                            } else {
+                              disconnectChain(chain.id);
+                            }
                             haptic.impactOccurred("light");
                           }}
                           className="px-2.5 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 active:bg-red-500/30 transition-colors font-medium"
