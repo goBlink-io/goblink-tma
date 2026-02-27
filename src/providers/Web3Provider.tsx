@@ -36,8 +36,8 @@ import {
   InjectedConnector,
 } from "@starknet-react/core";
 import { mainnet as starknetMainnet } from "@starknet-react/chains";
-import { ArgentMobileConnector } from "starknetkit/argentMobile";
-import { constants as starknetConstants } from "starknet";
+// ArgentMobileConnector removed — fragile in TMA WebView. Manual entry used instead.
+
 
 // TON
 import { TonConnectUIProvider } from "@tonconnect/ui-react";
@@ -157,27 +157,14 @@ const suiNetworks = {
 };
 
 // Starknet connectors
-// ArgentMobileConnector uses WalletConnect under the hood — works in TMA
+// Starknet connectors — injected only (TMA uses manual address entry)
 const starknetConnectors = [
   new InjectedConnector({ options: { id: "argentX" } }),
   new InjectedConnector({ options: { id: "braavos" } }),
-  ArgentMobileConnector.init({
-    options: {
-      projectId: projectId || "",
-      chainId: starknetConstants.NetworkName.SN_MAIN,
-      dappName: "goBlink",
-      description: "Cross-Chain Transfers",
-      url: typeof window !== "undefined" ? window.location.origin : "https://telegram.goblink.io",
-      icons: ["https://goblink.io/icon.png"],
-    },
-  }),
 ];
 
-// Tron adapters — WalletConnect added for TMA support
-// @tronweb3/tronwallet-adapter-walletconnect is installed but its CJS build
-// has a missing ./adapter.js in the cjs directory. Using dynamic import for safety.
-let tronAdapters: InstanceType<typeof TronLinkAdapter>[] = [new TronLinkAdapter()];
-// WalletConnectAdapter is loaded lazily in the modal flow for TMA
+// Tron adapters — TronLink for browser, manual entry for TMA
+const tronAdapters = [new TronLinkAdapter()];
 
 // TON manifest
 const tonManifestUrl =
