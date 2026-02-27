@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { useAppKit } from "@reown/appkit/react";
 import { ConnectButton as SuiConnectButton } from "@mysten/dapp-kit";
 import { connectNearWallet } from "../lib/nearConnector";
+import { connectNearWalletConnect } from "../lib/nearWalletConnect";
 import { useWallet as useAptosWallet } from "@aptos-labs/wallet-adapter-react";
 import { useConnect as useStarknetConnect } from "@starknet-react/core";
 import { useTonConnectUI } from "@tonconnect/ui-react";
@@ -10,6 +11,7 @@ import { useWallet as useTronWallet } from "@tronweb3/tronwallet-adapter-react-h
 import { useWalletStore, type ChainType } from "../store/walletStore";
 import { useWalletSync } from "../hooks/useWalletSync";
 import { useTelegram } from "../hooks/useTelegram";
+import { REOWN_PROJECT_ID } from "../lib/constants";
 
 interface ChainOption {
   id: ChainType;
@@ -152,6 +154,16 @@ export function ConnectWalletModal() {
   const [selectedChain, setSelectedChain] = useState<ChainType | null>(null);
   const [showManualEntry, setShowManualEntry] = useState(false);
 
+  // starknetConnectors from useConnect includes all registered connectors
+  // (InjectedConnector for ArgentX/Braavos + ArgentMobileConnector for WC)
+  // Chains with WalletConnect support in TMA
+  // - starknet: ArgentMobileConnector (WC via Argent Mobile)
+  // - near: @near-wallet-selector/wallet-connect (Meteor Wallet)
+  // - tron: WalletConnectAdapter via @tronweb3/tronwallet-adapter-walletconnect
+  // - sui: NO native WC in @mysten/dapp-kit for TMA (documented)
+  // - aptos: NO WC adapter available (documented)
+  const wcSupportedChains: ChainType[] = ["starknet", "near", "tron"];
+
   // Chains that only support manual entry (no WalletConnect SDK available)
   const manualOnlyChains: ChainType[] = ["sui", "near", "aptos", "starknet", "tron"];
 
@@ -175,6 +187,9 @@ export function ConnectWalletModal() {
 
   if (!isModalOpen) return null;
 
+  const [wcConnecting, setWcConnecting] = useState(false);
+  const [wcError, setWcError] = useState<string | null>(null);
+
   const handleManualSave = (chain: ChainType, address: string) => {
     setWallet(chain, address);
     haptic.notificationOccurred("success");
@@ -183,12 +198,89 @@ export function ConnectWalletModal() {
     setSelectedChain(null);
   };
 
+  /**
+   * WalletConnect handler for TMA mode.
+   * Opens the chain's mobile wallet via WalletConnect deep link / modal.
+   */
+  const handleWalletConnect = async (chain: ChainType) => {
+    setWcConnecting(true);
+    setWcError(null);
+    haptic.selectionChanged();
+    try {
+      switch (chain) {
+        case "starknet": {
+          // Use the ArgentMobileConnector — uses WalletConnect v2
+          // starknetConnectors comes from useConnect (includes all StarknetConfig connectors)
+          const argentMobileConnector = starknetConnectors.find(
+            (c) => c.id === "argentMobile" || c.id === "argent-mobile"
+          );
+          if (argentMobileConnector) {
+            starknetConnect({ connector: argentMobileConnector });
+            closeModal();
+          } else {
+            setWcError("Argent Mobile connector not found. Try manually.");
+          }
+          break;
+        }
+        case "near": {
+          const accountId = await connectNearWalletConnect();
+          if (accountId) {
+            setWallet("near", accountId);
+            haptic.notificationOccurred("success");
+            closeModal();
+          } else {
+            setWcError("NEAR WalletConnect cancelled or failed.");
+          }
+          break;
+        }
+        case "tron": {
+          // Dynamically import WalletConnectAdapter to avoid CJS issues
+          const { WalletConnectAdapter } = await import(
+            "@tronweb3/tronwallet-adapter-walletconnect"
+          );
+          const wcAdapter = new WalletConnectAdapter({
+            network: "Mainnet",
+            options: {
+              relayUrl: "wss://relay.walletconnect.com",
+              projectId: REOWN_PROJECT_ID,
+              metadata: {
+                name: "goBlink",
+                description: "Cross-Chain Transfers",
+                url: window.location.origin,
+                icons: ["https://goblink.io/icon.png"],
+              },
+            },
+          });
+          await wcAdapter.connect();
+          const address = wcAdapter.address;
+          if (address) {
+            setWallet("tron", address);
+            haptic.notificationOccurred("success");
+            closeModal();
+          } else {
+            setWcError("TRON WalletConnect cancelled or failed.");
+          }
+          break;
+        }
+        default:
+          setWcError("WalletConnect not supported for this chain.");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`WalletConnect ${chain} failed:`, e);
+      setWcError(`Connection failed: ${msg.slice(0, 80)}`);
+    } finally {
+      setWcConnecting(false);
+    }
+  };
+
   const handleConnect = async (chain: ChainType) => {
     haptic.selectionChanged();
 
-    // In TMA mode, manual-only chains always use manual entry
+    // In TMA mode: manualOnlyChains show WC/manual UI (handled via renderChainConnect)
+    // This check is no longer needed — renderChainConnect handles TMA flow
     if (isInTMA && manualOnlyChains.includes(chain)) {
-      setShowManualEntry(true);
+      // Do nothing here — renderChainConnect renders the TMA-specific UI
       return;
     }
 
@@ -249,23 +341,72 @@ export function ConnectWalletModal() {
       );
     }
 
-    // TMA mode: show manual entry option directly for unsupported chains
+    // TMA mode: show WalletConnect (primary) + manual entry (secondary)
     if (isInTMA && manualOnlyChains.includes(selectedChain)) {
+      const supportsWC = wcSupportedChains.includes(selectedChain);
+      const chainName = CHAINS.find((c) => c.id === selectedChain)?.name ?? selectedChain;
+
       return (
         <div className="space-y-4 p-4">
-          <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
-            <p className="text-xs text-amber-400 font-medium">
-              ⚡ Telegram WebApp Mode
+          <div className="rounded-xl bg-blue-500/10 border border-blue-500/20 p-3">
+            <p className="text-xs text-blue-400 font-medium">
+              📱 Telegram WebApp Mode
             </p>
             <p className="text-xs text-[var(--tg-theme-hint-color,#94a3b8)] mt-1">
-              Browser extensions aren't available in Telegram. Enter your address manually — no signing required.
+              {supportsWC
+                ? "Connect your mobile wallet via WalletConnect, or enter address manually."
+                : "Browser extensions aren't available in Telegram. Enter your address manually — no signing required."}
             </p>
           </div>
+
+          {/* WalletConnect — primary option when supported */}
+          {supportsWC && (
+            <button
+              onClick={() => handleWalletConnect(selectedChain)}
+              disabled={wcConnecting}
+              className="w-full py-3 bg-gradient-to-r from-blue-600 to-violet-600 rounded-xl font-medium text-white active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {wcConnecting ? (
+                <>
+                  <span className="animate-spin text-sm">⏳</span>
+                  Connecting…
+                </>
+              ) : (
+                <>
+                  <span>🔗</span>
+                  Connect via WalletConnect
+                </>
+              )}
+            </button>
+          )}
+
+          {/* WC error */}
+          {wcError && (
+            <p className="text-xs text-red-400 text-center">{wcError}</p>
+          )}
+
+          {/* Sui / Aptos: no WC available — explain why */}
+          {!supportsWC && (selectedChain === "sui" || selectedChain === "aptos") && (
+            <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+              <p className="text-xs text-[var(--tg-theme-hint-color,#94a3b8)]">
+                <span className="font-medium text-white/70">Note:</span>{" "}
+                {selectedChain === "sui"
+                  ? "Sui WalletConnect requires the Sui dApp Kit modal which isn't optimized for Telegram WebView. Use address entry below."
+                  : "Aptos WalletConnect support is not yet available in this environment. Use address entry below."}
+              </p>
+            </div>
+          )}
+
+          {/* Manual entry — always available as fallback */}
           <button
             onClick={() => setShowManualEntry(true)}
-            className="w-full py-3 bg-gradient-to-r from-blue-600 to-violet-600 rounded-xl font-medium text-white active:scale-[0.98] transition-all"
+            className={`w-full py-3 rounded-xl font-medium active:scale-[0.98] transition-all ${
+              supportsWC
+                ? "bg-white/5 text-[var(--tg-theme-hint-color,#94a3b8)] text-sm border border-white/10"
+                : "bg-gradient-to-r from-blue-600 to-violet-600 text-white"
+            }`}
           >
-            Enter Address Manually
+            {supportsWC ? "Or enter address manually" : `Enter ${chainName} Address Manually`}
           </button>
         </div>
       );
