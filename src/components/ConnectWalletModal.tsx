@@ -38,10 +38,11 @@ function validateAddress(chain: ChainType, addr: string): boolean {
   if (!s) return false;
   switch (chain) {
     case "sui":
+      return /^0x[0-9a-fA-F]{64}$/.test(s);
     case "aptos":
-      return /^0x[0-9a-fA-F]{63,64}$/.test(s);
+      return /^0x[0-9a-fA-F]{1,64}$/.test(s);
     case "near":
-      return /^[a-z0-9_-]+(\.[a-z0-9_-]+)*$/.test(s) || /^[0-9a-fA-F]{64}$/.test(s);
+      return /^[a-z0-9._-]+\.near$/.test(s) || /^[0-9a-fA-F]{64}$/.test(s);
     case "starknet":
       return /^0x[0-9a-fA-F]{1,64}$/.test(s);
     case "tron":

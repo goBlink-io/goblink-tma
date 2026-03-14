@@ -32,8 +32,6 @@ export function useTransfer() {
     haptic.impactOccurred("medium");
 
     try {
-      setTxStatus("SUBMITTED");
-
       const result = await submitTransfer({
         fromChain,
         toChain,
@@ -44,6 +42,7 @@ export function useTransfer() {
         depositAddress: quote?.depositAddress,
       });
 
+      setTxStatus("SUBMITTED");
       setDepositAddress(result.depositAddress);
       setTxStatus("TRACKING");
       haptic.notificationOccurred("success");

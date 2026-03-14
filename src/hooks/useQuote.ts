@@ -47,7 +47,7 @@ export function useQuote(): UseQuoteReturn {
         fromToken,
         toToken,
         amount,
-      });
+      }, controller.signal);
       if (!controller.signal.aborted) {
         setLocalQuote(result);
         setQuote(result);
@@ -74,6 +74,7 @@ export function useQuote(): UseQuoteReturn {
     timerRef.current = setTimeout(doFetch, 500);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      abortRef.current?.abort();
     };
   }, [doFetch]);
 

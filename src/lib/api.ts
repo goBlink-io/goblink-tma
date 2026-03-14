@@ -113,8 +113,8 @@ export async function fetchPrices(): Promise<PriceMap> {
   return data;
 }
 
-export async function fetchQuote(params: QuoteParams): Promise<Quote> {
-  const { data } = await api.get<Quote>("/api/quote", { params });
+export async function fetchQuote(params: QuoteParams, signal?: AbortSignal): Promise<Quote> {
+  const { data } = await api.get<Quote>("/api/quote", { params, signal });
   return data;
 }
 

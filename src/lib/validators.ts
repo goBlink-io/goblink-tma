@@ -6,7 +6,7 @@ const SUI_ADDRESS_RE = /^0x[a-fA-F0-9]{64}$/;
 const NEAR_ADDRESS_RE = /^[a-z0-9._-]+\.near$|^[a-fA-F0-9]{64}$/;
 const APTOS_ADDRESS_RE = /^0x[a-fA-F0-9]{1,64}$/;
 const STARKNET_ADDRESS_RE = /^0x[a-fA-F0-9]{1,64}$/;
-const TRON_ADDRESS_RE = /^T[a-zA-Z0-9]{33}$/;
+const TRON_ADDRESS_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
 
 const EVM_CHAINS: ChainId[] = [
   "eth",
